@@ -1,0 +1,247 @@
+#!/usr/bin/perl -T -w
+
+# (C) 2009 Regents of the University of California
+# John H. Robinson, IV <jhriv@ucsd.edu>
+# 2010-06-08
+
+$VERSION='1.0 (2010-06-21)';
+
+use Expect;
+use Getopt::Std;
+use Config::IniFiles;
+use CGI;
+use Time::HiRes qw(gettimeofday tv_interval);
+
+sub commify;
+sub server_exists ($$); # section, config
+sub VERSION_MESSAGE ($$$$);
+
+$Getopt::Std::STANDARD_HELP_VERSION=1; # Stop excessive paranoia
+
+# Text / email format layout
+$^L="\n\n";
+format MAIL=
+To: @*
+$TO
+From: @*
+$FROM
+Subject: @*
+$SUBJECT
+@<
+''
+.
+format IPA_TOP=
+@||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+'INNOVATIVE SYSTEM STATUS'
+@||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+$HEADER
+RECORD TYPE        CURRENT#    MAX ALLOWED  TOTAL AVAILABLE
+.
+format IPA=
+ @<<<<<<<<<<<<<    @>>>>>>>    @>>>>>>>>>>  @>>>>>>>>>>>>>> @>
+ $RECORD,          $CUR,       $MAX,        $AVAIL,         $FLAG
+.
+
+format FLAG_TOP=
+@<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+'The following are below their limits:'
+
+@<<<<<<<<<<<<<< @<<<<<<<<<<<<<    @>>>>>>>>>>>>>> @>>>>>>>>>>>>>>
+'SERVER',       'RECORD',         'LIMIT',        'AVAIL'
+.
+format FLAG=
+ @<<<<<<<<<<<<<< @<<<<<<<<<<<<<    @>>>>>>>>>>>>>> @>>>>>>>>>>>>>>
+ $SERVER,        $RECORD,          $LIMIT,         $AVAIL
+.
+my $t0=[gettimeofday];
+
+$ENV{PATH}='/bin:/usr/bin';
+$ENV{SSH_AUTH_SOCK}='';
+$TRUE=(1==1); # portable and future-proofed truth
+$FALSE=!$TRUE;
+$|=1; # Set autoflush for STDOUT
+@flagged=();
+$FROM='Innopac Cron User <innopac@libcms.ucsd.edu>';
+$sec=$min=$hour=$mday=$mon=$year=$wday=$yday=$isdst=0;
+($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
+$SUBJECT=sprintf "IPA_%02d_%02d_%02d", $year%100, $mon+1, $mday;
+$SUBJECT_FLAGGED="$SUBJECT - FLAGGED";
+
+# Read configuration
+my $config_default='DEFAULT';
+my $config_file='IPA.conf';
+
+my $cfg = new Config::IniFiles (
+        -file => $config_file,
+        -default=>lc($config_default),
+		-nocase=>1,
+);
+$cfg->delval($config_default, 'server'); # default server ignored.
+
+
+our ($opt_m, $opt_q, $opt_T);
+getopts ('mqT:');
+
+$TO=$cfg->val('mail', 'to');
+if ($opt_T) {
+	$TO=$opt_T;
+}
+
+if ($opt_m) {
+	@TO=split /,/, $TO;
+	open (MAIL, '|-', '/usr/sbin/sendmail', '-f', 'root@libcms.ucsd.edu', @TO)
+	#open (MAIL, '|-', '/bin/cat')
+		or die "Could not send mail\n\n$report\n";
+	select MAIL;
+	write;
+}
+
+# Use the correct format
+$^="IPA_TOP";
+$~="IPA";
+
+for $section ($cfg->Sections) {
+	next if $section =~ /^$config_default$/; # skip default section
+
+	next unless server_exists( $section, $cfg); # No sever, no service.
+
+	$server=$cfg->val($section, 'server');
+	$login=$cfg->val($section, 'login');
+	$password=$cfg->val($section, 'password');
+
+	# Clear out previous values (if any)
+	@report=();
+
+	$HEADER=sprintf q/%s (%s)/, $section, $server;
+
+	$exp=new Expect;
+	$exp -> raw_pty(1);
+	$exp -> log_user (0);
+	$exp -> spawn ('/usr/bin/ssh', '-x', '-l', $login, $server) or 
+		die "Cannot connect to $server: $!\n";
+	$exp -> expect (undef, "password:");
+	$exp -> send ("$password\n");
+	$exp -> expect (undef, "(S,D,C,M,A,I,Q)");
+	$exp -> send ( "m");
+	$exp -> expect (undef, "(I,A,G,P,R,M,C,L,S,Q)");
+	$exp -> send ( "i");
+	$exp -> expect (undef, "(F,C,S,W,L,R,O,T,P,A,Q)");
+	$exp -> send ( "f");
+	$exp -> expect (undef, "(S,X,D,C,A,Q)");
+	$exp -> send ( "s");
+	@result = ( $exp -> expect (undef, "(F,P,Q)"));
+	$exp -> send ( "q" x 5 );
+	$exp -> expect (undef, "closed");
+	$exp -> soft_close;
+
+	# Replace all ANSI sequences with a space
+	$result[3] =~ s/\e[^A-Z]+[A-Z]/ /g;
+
+	# Prepend a newline before each record
+	$result[3] =~ s/ ([A-Z])/\n$1/g;
+
+	$R=q/([A-Z]+) +\d+x? +(\d+x?) +(\d+x?) +\d+x?/;
+	foreach (split /\n/, $result[3]) {
+		 m/$R/ && push @report, sprintf q/%s %s %s/, $1, $2, $3;
+	}
+
+	$return_code=0;
+	#$report=join ("\n", @report);
+
+	# Use the correct format
+	$^="IPA_TOP";
+	$~="IPA";
+	$-=0; # Force a new page
+
+	if ($opt_q and $return_code==0) {
+		exit $return_code
+	}
+
+	foreach (@report) {
+		@record=split;
+		$RECORD=$record[0];
+		$CUR=commify $record[1];
+		$MAX=commify $record[2];
+		$avail=$record[2]-$record[1];
+		$AVAIL=commify( $avail);
+		$FLAG="";
+		$flag=$cfg->val($section, $RECORD);
+		if (defined $flag && $flag ne "") {
+			$flag =~ s/[^0-9.]//g;
+			if  ($flag>0 && ("$flag" > $avail)) {
+				$FLAG="*";
+				push @flagged, 
+					sprintf"%s %s %s %s", $section, $RECORD,
+						commify($flag), commify($avail);
+			}
+		}
+		write;
+	}
+	$-=0; # Force a new page
+}
+
+if (scalar @flagged > 0) {
+	# Use the correct format
+	$^="FLAG_TOP";
+	$~="FLAG";
+
+	foreach (@flagged) {
+		($SERVER, $RECORD, $LIMIT, $AVAIL)=split;
+		write;
+	}
+
+	if ($opt_m) {
+		close MAIL;
+		open (MAIL, '|-', '/usr/sbin/sendmail', '-f', 'root@gort.ucsd.edu', @TO)
+		#open (MAIL, '|-', '/bin/cat')
+			or die "Could not send mail\n\n$report\n";
+		select MAIL;
+		$SUBJECT=$SUBJECT_FLAGGED;
+
+		$^="MAIL_TOP";
+		$~="MAIL";
+		write;
+		$-=0; # Force a new page
+		# Use the correct format
+		$^="FLAG_TOP";
+		$~="FLAG";
+
+		foreach (@flagged) {
+			($SERVER, $RECORD, $LIMIT, $AVAIL)=split;
+			write;
+		}
+	}
+}
+
+close MAIL if $opt_m;
+exit $return_code;
+
+sub commify {
+	scalar reverse join ',',
+	unpack '(A3)*',
+	scalar reverse shift
+}
+
+sub server_exists ($$) { # section, config
+	(my $section, my $config) = @_;
+	my $result=$TRUE;
+
+	my $server=$config->val($section, 'server');
+	if ( !defined $server or $server =~ /^$/ ) {
+		$result=$FALSE;
+	}
+
+	return $result;
+}
+
+sub VERSION_MESSAGE ($$$$) {
+	(my $FH, $getopt, $getopt_ver, $switches) = @_;
+
+	# Not using the following, so clear then out (prevents warnings)
+	$getopt = $getopt_ver = $switches = "";
+
+	$0 =~ m{.*/([^/]*)$}; # Match the basename
+	printf $FH "%s\n", $1;
+	printf $FH "Version %s\n", $VERSION;
+	exit 0;
+}

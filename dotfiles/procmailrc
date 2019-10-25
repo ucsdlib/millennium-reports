@@ -1,0 +1,12 @@
+# Mail for ISS reports should go to a folder for today's date
+LOGFILE=L.procmail
+
+:0c:
+* ^TO_ iii\+iss
+iss-`date -I`
+
+:0c:
+* ^TO_ iii.iss
+iss-`date -I`
+
+# Fall through to default / the system mailbox

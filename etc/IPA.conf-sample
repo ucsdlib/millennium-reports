@@ -1,0 +1,49 @@
+[DEFAULT]
+	; to log into Millenium III
+	login=mill
+	password=s00p3rs3kr!t
+	; any server definition in this section will be ignored.
+
+	; report recipients
+	to=recpient1@domain.tld recpient2@domain.tld
+
+	; report flags. commas are ignored. 
+	Bibliographic=
+	Order=
+	CheckIn=
+	Authority=
+	Item=
+	Patron=
+	Course=
+	Vendor=
+	Invoice=
+	Resource=
+	License=
+	Contact=
+
+[production]
+	server=mill-prod.domain.tld
+	; report flags. commas are ignored. 
+	Bibliographic=10,000
+	Order=5,000
+	CheckIn=1,000
+	Authority=5,000
+	Item=15,000
+	Patron=2,000
+	Course=200
+	Vendor=1,000
+	Invoice=2,000
+	Resource=200
+	License=200
+	Contact=200
+
+[training]
+	server=mill-train.domain.tld
+
+;You may add any additional sections.
+;You may also override any defaults defined.
+
+;[testing]
+;	server=testing.example.com
+;	login=test
+;	password=CHANGEME

@@ -1,0 +1,25 @@
+[DEFAULT]
+	; to log into Millenium III
+	login=milluser
+	password=CHANGEME
+	; to access the ADDITIONAL system functions -> BACKUP database to tape
+	initials=role
+	access=ME2CHANGE
+	; any server definition in this section will be ignored.
+
+	; report recipients
+	to=user@domain.tld
+
+[production]
+	server=mill.domain.tld
+
+[training]
+	;server=limmtest.domain.tld
+
+;You may add any additional sections.
+;You may also override any defaults defined.
+
+;[testing]
+;	server=testing.example.com
+;	login=test
+;	password=CHANGEME

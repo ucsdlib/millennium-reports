@@ -1,0 +1,71 @@
+#!/usr/bin/perl -T -w
+
+use File::Temp qw/ tempfile tempdir /;
+
+$ENV{PATH}="/bin:/usr/bin:/usr/local/bin";
+
+$sec=$min=$hour=$mday=$mon=$year=$wday=$yday=$isdst=0;
+($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
+
+$working_directory=tempdir( CLEANUP => 1 );
+
+$today=sprintf ("%04d-%02d-%02d", $year+1900, $mon+1, $mday);
+$SUBJECT=sprintf "ISS_%02d_%02d_%02d", $year%100, $mon+1, $mday;
+@TO=qw(
+	jhriv@ucsd.edu
+	gferguson@ucsd.edu
+	isekowsk@ucsd.edu
+);
+
+$mbox_file="iss-$today";
+
+open ($mbox_fh, '<', $mbox_file)
+    or die "Cannot open $mbox_file: $!\n";
+
+@report_pages=(
+	"INNOVATIVE SYSTEM STATUS",
+	"INNOVATIVE CATALOG DATABASE STATUS",
+	"CIRCULATION STATUS",
+	"ACQUISITIONS/SERIALS STATUS",
+);
+
+$message=0;
+undef $message_body;
+while (<$mbox_fh>) {
+	$line=$_;
+	if (/^From / .. /^$/) {
+		# header
+		if (/^From /) {
+			$message++;
+			if (defined $message_body) {
+				close $message_body
+					or die "Can't close: $!\n";
+			}
+			open $message_body, '>', "$working_directory/$message"
+			    or die "Can't open message body file $working_directory/$message: $!";
+		}
+	}
+	else {
+		# body
+		print $message_body "$_";
+		@title = grep { $line =~ /$_/ } @report_pages;
+   		if ($#title == 0) {
+			$report{$title[0]}=$message;
+		}
+	}
+
+}
+close $message_body or die "Can't close: $!\n";
+
+open $mail, '|-','/bin/mail', '-s', $SUBJECT, @TO
+#open $mail, '|-','/bin/cat'
+    or die "Could not spawn mail: $!\n";
+
+for $i (@report_pages) {
+	open $current_page, '<', "$working_directory/$report{$i}" or die "bleah: $!\n";
+	while (<$current_page>) {
+		print $mail $_;
+	}
+}
+
+close $mail;

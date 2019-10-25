@@ -1,0 +1,6 @@
+#!/bin/sh
+
+here=$(readlink -f $(dirname "$0"))
+
+cd "$here"
+./millennium_IPSS-mail
